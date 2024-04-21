@@ -7,6 +7,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <unordered_map>
+#include <vector>
 #include <sys/mman.h>
 
 /** Input File; UTF-8, UNIX line breaks 0x0a
@@ -80,6 +81,10 @@ public:
             chunk_start_ = 0;
         }
 
+        [[nodiscard]] char const * begin() const { return reinterpret_cast<char const *>(ptr_); }
+        [[nodiscard]] char const * end() const { return reinterpret_cast<char const *>(ptr_) + len_; }
+        [[nodiscard]] std::string_view string_view() const { return std::string_view{begin(), end()}; }
+
         void *ptr_{nullptr};
         size_t len_{0};
         size_t chunk_start_ {0};
@@ -98,7 +103,7 @@ public:
         if (fd_ < 0) {
             perror((file_name_.c_str()));
         }
-        compute_chunks();
+        compute_chunks(chunk_size_approx);
     }
 
     ~mmapped_file() noexcept {
@@ -110,6 +115,8 @@ public:
     operator bool() const noexcept { return fd_ > 0; }
 
     [[nodiscard]] size_t chunks_total() const noexcept { return chunks_total_; }
+
+    [[nodiscard]] size_t chunk_size() const noexcept { return chunk_size_; }
 
     auto get_chunk(size_t n) const -> mmemory_chunk {
         if (n >= chunks_total_)
@@ -124,6 +131,7 @@ public:
     }
 
     auto get_chunk_for_offset(size_t off) const -> mmemory_chunk {
+        std::cerr << __func__ << "(" << off << ")\n";
         auto find_closest_multiple = [](auto n, auto v) {
             int result = ((n + v - 1) / v) * v;
             if (result > n) {
@@ -133,7 +141,7 @@ public:
         };
         size_t chunk_start = find_closest_multiple(off, page_size());
         size_t initial_offset = off - chunk_start;
-        size_t len = std::max(chunk_size_, file_size_ - chunk_start);
+        size_t len = std::min(chunk_size_, file_size_ - chunk_start);
         void *ptr = mmap(nullptr, len, PROT_READ, MAP_PRIVATE, fd_, chunk_start);
         if (MAP_FAILED == ptr) {
             perror(file_name_.c_str());
@@ -143,15 +151,15 @@ public:
     }
 
 protected:
-    void compute_chunks() noexcept {
+    void compute_chunks(size_t chunk_size_approx) noexcept {
         auto find_closest_multiple = [](auto n, auto v) {
             int result = ((n + v - 1) / v) * v;
-            if (result < 0) {
+            if (result < 2*v) {
                 result += v;
             }
             return result;
         };
-        chunk_size_ = find_closest_multiple(file_size_, page_size());
+        chunk_size_ = find_closest_multiple(chunk_size_approx, page_size());
         auto div = std::lldiv(file_size_, chunk_size_);
         chunks_total_ = div.quot;
         chunks_last_remainder_ = div.rem;
@@ -200,6 +208,67 @@ struct string_hash {
     std::size_t operator()(std::string const &str) const { return hash_type{}(str); }
 };
 
+using agg_map_type = std::unordered_map<std::string, statistics, string_hash, std::equal_to<> >;
+
+/**
+ * scan a part of input
+ * .    .    .    .    .    .    .    .    .    .    .    .    .
+ * Kansas;12.3\München;2.1\Hamburg;13.4\Blabla;34.4\Kairo;17.4\
+ * *########################
+ *                     ####*####################
+ *                                    ##*######################
+ * @param input input file
+ * @param start offset in file from where to start; actually start _after_ the first new-line behind start, except if start == 0
+ * @param end pffset in file where to stop; actually continue until the first new-line behind end
+ * @return the map off aggregated values
+ */
+auto scan_input(mmapped_file const & input, size_t start, size_t end) -> agg_map_type {
+    using std::string_view_literals::operator ""sv;
+    agg_map_type map;
+    constexpr size_t MAX_FIELDS_CNT = 10;
+    std::vector<size_t> field_pos(10);
+    size_t file_pos = start;
+    while (file_pos < end) {
+        auto chunk = input.get_chunk_for_offset(file_pos);
+        auto sv = chunk.string_view().substr(chunk.initial_offset_);
+        field_pos.clear();
+        field_pos.push_back(0);
+        for (size_t i = 0; i < sv.size(); ++i) {
+            if (sv[i] != u8';' && sv[i] != u8'\n')
+                continue;
+            field_pos.push_back(i + 1);
+            if (sv[i] == u8';') {
+                if (field_pos.size() >= MAX_FIELDS_CNT) {
+                    std::cerr << "Broken format in input file: too many fields at " << (chunk.chunk_start_ + chunk.initial_offset_ + i) << '\n';
+                    throw std::runtime_error("Broken format in input file: too many fields");
+                }
+            }
+            if (sv[i] == u8'\n') {
+                if (field_pos.size() != 3) {
+                    std::cerr << "Broken format in input file: too many fields at " << (chunk.chunk_start_ + chunk.initial_offset_ + i) << '\n';
+                    throw std::runtime_error("Broken format in input file: not 2 fields");
+                }
+                auto station_view = sv.substr(field_pos[0], field_pos[1] - 1 - field_pos[0]);
+                auto value_view = sv.substr(field_pos[1], field_pos[2] - 1 - field_pos[1]);
+                float float_value = std::stof(std::string(value_view));
+
+                auto found = map.find(station_view);
+                if (found == map.end()) {
+                    map.emplace(station_view, float_value);
+                } else {
+                    found->second.add_value(float_value);
+                }
+                ++i;
+                field_pos.clear();
+                field_pos.push_back(i);
+                file_pos = chunk.chunk_start_ + chunk.initial_offset_ + i;
+            }
+        }
+
+    }
+    return map;
+}
+
 int main(int argc, char *argv[]) {
     if (argc < 2) {
         usage(argv[0]);
@@ -214,63 +283,16 @@ int main(int argc, char *argv[]) {
         exit(2);
     }
     std::cerr << "Using " << input_it->file_name_ << '\n';
-    mmapped_file input(input_it->file_name_, 4096);
+    mmapped_file input(input_it->file_name_);
     if (input) {
         std::cerr << "File has size: " << input.file_size() << '\n';
-        std::cerr << "Will divide into " << input.chunks_total() << " chunks.\n";
+        std::cerr << "Will divide into " << input.chunks_total() << " chunks of size " << input.chunk_size() << '\n';
 
-        std::unordered_map<std::string, statistics, string_hash, std::equal_to<> > map;
-        unsigned field_cnt = 0;
-        char const *field1_end, *field2_end;
-
-        for (size_t chunk_idx = 0; chunk_idx < input.chunks_total(); ++chunk_idx) {
-            auto chunk = input.get_chunk(chunk_idx);
-            char const *it = reinterpret_cast<char const *>(chunk.ptr_);
-            char const *const start = it;
-            char const *const end = it + chunk.len_;
-
-            for (char const *line_it = it; line_it < end; ++line_it) {
-                constexpr size_t FIELDS_LEN = 10;
-                char const *fields[FIELDS_LEN];
-                fields[0] = line_it;
-                size_t field_idx = 0;
-                for (; line_it < end; ++line_it) {
-                    if (*line_it != u8';' && *line_it != u8'\n')
-                        continue;
-
-                    ++field_idx;
-                    if (field_idx >= FIELDS_LEN) {
-                        std::cerr << "Broken format in input file: too many fields at " << (line_it - start) << '\n';
-                        throw std::runtime_error("Broken format in input file: too many fields");
-                    }
-                    fields[field_idx] = line_it + 1;
-                    if (*line_it == u8'\n') {
-                        if (field_idx != 2) {
-                            std::cerr << "Broken format in input file: too many fields at " << (line_it - start) << '\n';
-                            throw std::runtime_error("Broken format in input file: not 2 fields");
-                        }
-                        std::string_view station_view(fields[0], fields[1] - 1);
-                        std::string_view value_view(fields[1], fields[2] - 1);
-                        float float_value = std::stof(std::string(fields[1], fields[2] - 1));
-
-                        auto found = map.find(station_view);
-                        if (found == map.end()) {
-                            map.emplace(station_view, float_value);
-                        } else {
-                            found->second.add_value(float_value);
-                        }
-                        it = line_it + 1;
-                        fields[0] = fields[field_idx];
-                        field_idx = 0;
-
-                    }
-                }
-            }
-        }
+        auto agg = scan_input(input, 0, input.file_size());
 
         // print all collected statistics
         std::cerr << " **** Statistics ****\n";
-        for (auto const &e: map) {
+        for (auto const &e: agg) {
             std::cout << e.first << ": " << e.second << '\n';
         }
     }
