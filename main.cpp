@@ -1,4 +1,6 @@
 // https://1brc.dev/#the-challenge
+#define _FILE_OFFSET_BITS 64
+
 #include <algorithm>
 #include <filesystem>
 #include <unordered_set>
@@ -96,7 +98,7 @@ public:
         return ps;
     }
 
-    explicit mmapped_file(std::string const &file_name, size_t chunk_size_approx = 4096 << 10)
+    explicit mmapped_file(std::string const &file_name, size_t chunk_size_approx = 1 << 26)
         : file_name_{file_name} {
         file_size_ = std::filesystem::file_size(file_name_);
         fd_ = open(file_name_.c_str(), O_RDONLY);
@@ -118,22 +120,24 @@ public:
 
     [[nodiscard]] size_t chunk_size() const noexcept { return chunk_size_; }
 
+    /*
     auto get_chunk(size_t n) const -> mmemory_chunk {
         if (n >= chunks_total_)
             throw std::runtime_error("Index out of bounds");
         size_t len = (n < chunks_total_ - 1) ? chunk_size_ : chunks_last_remainder_;
-        void *ptr = mmap(nullptr, len, PROT_READ, MAP_PRIVATE, fd_, n * chunk_size_);
+        void *ptr = mmap64(nullptr, len, PROT_READ, MAP_PRIVATE, fd_, n * chunk_size_);
         if (MAP_FAILED == ptr) {
             perror(file_name_.c_str());
             throw std::runtime_error("MAP FAILED");
         }
         return mmemory_chunk{ptr, len, n * chunk_size_, 0};
     }
+    */
 
     auto get_chunk_for_offset(size_t off) const -> mmemory_chunk {
         std::cerr << __func__ << "(" << off << ")\n";
         auto find_closest_multiple = [](auto n, auto v) {
-            int result = ((n + v - 1) / v) * v;
+            auto result = ((n + v - 1) / v) * v;
             if (result > n) {
                 result -= v;
             }
@@ -143,6 +147,7 @@ public:
         size_t initial_offset = off - chunk_start;
         size_t len = std::min(chunk_size_, file_size_ - chunk_start);
         void *ptr = mmap(nullptr, len, PROT_READ, MAP_PRIVATE, fd_, chunk_start);
+        constexpr size_t so = sizeof(off_t);
         if (MAP_FAILED == ptr) {
             perror(file_name_.c_str());
             throw std::runtime_error("MAP FAILED");
@@ -288,7 +293,7 @@ int main(int argc, char *argv[]) {
         std::cerr << "File has size: " << input.file_size() << '\n';
         std::cerr << "Will divide into " << input.chunks_total() << " chunks of size " << input.chunk_size() << '\n';
 
-        auto agg = scan_input(input, 0, input.file_size());
+        auto agg = scan_input(input, 2163765236ull, input.file_size());
 
         // print all collected statistics
         std::cerr << " **** Statistics ****\n";
