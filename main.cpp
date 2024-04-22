@@ -13,9 +13,10 @@
 #include <unistd.h>
 #include <unordered_map>
 #include <vector>
-#include <pstl/glue_numeric_defs.h>
+//#include <pstl/glue_numeric_defs.h>
 #include <sys/mman.h>
 #include <fmt/core.h>
+#include <argparse/argparse.hpp>
 
 /** Input File; UTF-8, UNIX line breaks 0x0a
 00000000  4b 61 6e 73 61 73 20 43  69 74 79 3b 2d 30 2e 38  |Kansas City;-0.8|
@@ -26,27 +27,6 @@
 00000050  72 6b 20 43 69 74 79 3b  32 2e 31 0a 4c 69 73 62  |rk City;2.1.Lisb|
 ...
 */
-
-struct input_file {
-    std::string input_name_;
-    std::string file_name_;
-};
-
-const input_file input_files[] = {
-    {.input_name_ = "100", .file_name_ = "measurements.100.txt"},
-    {.input_name_ = "1MIO", .file_name_ = "measurements.1E6.txt"},
-    {.input_name_ = "1MRD", .file_name_ = "measurements.1E9.txt"}
-};
-
-void usage(char *const exe_name) {
-    std::cout << "Usage: " << exe_name << " <name>\n"
-            << R"*(
-with <name> one of:
-)*";
-    for (auto const &e: input_files) {
-        std::cout << "    " << e.input_name_ << " => " << e.file_name_ << '\n';
-    }
-}
 
 class mmapped_file {
 public:
@@ -323,21 +303,21 @@ struct UTF8StringComparator {
     }
 };
 
+
+
 int main(int argc, char *argv[]) {
-    if (argc < 2) {
-        usage(argv[0]);
+    argparse::ArgumentParser args("1brc", "1.0");
+    args.add_argument("-T", "--threads").metavar(("THREADS")).help("Use specified number of threads").scan<'i', size_t>();
+    args.add_argument("file").help("input CSV file with two columns: STATION;DEGEREES").required();
+    try {
+        args.parse_args(argc, argv);
+    } catch(std::exception const & e) {
+        fmt::println(stderr, "{}", e.what());
+        std::cerr << args;
         exit(1);
     }
-    std::string selection = argv[1];
-    auto input_it = std::find_if(std::begin(input_files), std::end(input_files),
-                                 [&](auto const &e) { return e.input_name_ == selection; });
-    if (input_it == std::end(input_files)) {
-        std::cerr << "Unknown input!\n";
-        usage(argv[0]);
-        exit(2);
-    }
-    std::cerr << "Using " << input_it->file_name_ << '\n';
-    mmapped_file input(input_it->file_name_);
+    std::string file_name = args.get("file");
+    mmapped_file input(file_name);
     if (input) {
         fmt::println(stderr, "Using chunk size of {}.", input.chunk_size());
         fmt::println(stderr, "File has size {}.", input.file_size());
@@ -348,7 +328,8 @@ int main(int argc, char *argv[]) {
 
         size_t max_chunks = (size_t)std::ceil(input.file_size() / (double)input.chunk_size());
         fmt::println(stderr, "Maximum of {} chunks.", max_chunks);
-        auto partitions = std::min(max_chunks, (size_t)std::thread::hardware_concurrency());
+        size_t max_threads = args.present<size_t>("-T").value_or(std::thread::hardware_concurrency());
+        auto partitions = std::min(max_chunks, max_threads);
         fmt::println(stderr, "Using {} partitions (threads).", partitions);
         auto partition_size = input.file_size() / (double)partitions;
         for(size_t i = 0; i < partitions; ++i) {
