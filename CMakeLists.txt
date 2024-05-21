@@ -6,8 +6,20 @@ set(CMAKE_CXX_STANDARD 20)
 find_package(fmt CONFIG REQUIRED)
 find_package(argparse CONFIG REQUIRED)
 
-add_executable(1brc main.cpp)
+add_executable(1brc main.cpp
+        mmapped_file.h
+        statistics.h
+        simple_parse_float.cpp
+        simple_parse_float.h)
 target_link_libraries(1brc PRIVATE fmt::fmt argparse::argparse)
+target_compile_options(1brc PRIVATE "-mavx2" -O3)
+
+add_executable(simple_float_convert_test
+        simple_parse_float.cpp
+        simple_parse_float.h
+        simple_float_convert_test.cpp
+)
+target_link_libraries(simple_float_convert_test PRIVATE fmt::fmt)
 
 add_executable(create-sample
         create-sample.c)
