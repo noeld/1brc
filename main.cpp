@@ -1,4 +1,9 @@
 // https://1brc.dev/#the-challenge
+#include <atomic>
+#include <clocale>
+#include <exception>
+#include <future>
+#include <stdexcept>
 #define _FILE_OFFSET_BITS 64
 
 #include <algorithm>
@@ -15,6 +20,7 @@
 
 #include "mmapped_file.h"
 #include "statistics.h"
+#include "simple_parse_float.h"
 
 /** Input File; UTF-8, UNIX line breaks 0x0a
 00000000  4b 61 6e 73 61 73 20 43  69 74 79 3b 2d 30 2e 38  |Kansas City;-0.8|
@@ -67,7 +73,7 @@ using agg_map_type = std::unordered_map<std::string, statistics, string_hash, st
 auto scan_input(mmapped_file const & input, size_t start, size_t end, size_t partition) -> agg_map_type {
     using std::string_view_literals::operator ""sv;
     agg_map_type map(1000);
-    constexpr size_t MAX_FIELDS_CNT = 10;
+    static constexpr size_t MAX_FIELDS_CNT = 10;
     std::vector<size_t> field_pos(10);
     size_t file_pos = start;
     size_t skipped = 0;
@@ -97,19 +103,27 @@ auto scan_input(mmapped_file const & input, size_t start, size_t end, size_t par
             field_pos.push_back(i + 1);
             if (sv[i] == u8';') {
                 if (field_pos.size() >= MAX_FIELDS_CNT) {
-                    std::cerr << "Broken format in input file: too many fields at " << (chunk.chunk_start_ + chunk.initial_offset_ + i) << '\n';
+                    fmt::println(stderr, "Broken format in input file: too many fields at offset {}", (chunk.chunk_start_ + chunk.initial_offset_ + i));
                     throw std::runtime_error("Broken format in input file: too many fields");
                 }
             }
             if (sv[i] == u8'\n') {
                 if (field_pos.size() != 3) {
-                    std::cerr << "Broken format in input file: too many fields at " << (chunk.chunk_start_ + chunk.initial_offset_ + i) << '\n';
+                    fmt::println(stderr, "Broken format in input file: too many fields at offset {}", (chunk.chunk_start_ + chunk.initial_offset_ + i));
                     throw std::runtime_error("Broken format in input file: not 2 fields");
                 }
                 auto station_view = sv.substr(field_pos[0], field_pos[1] - 1 - field_pos[0]);
                 auto value_view = sv.substr(field_pos[1], field_pos[2] - 1 - field_pos[1]);
+#ifdef USE_SIMPLE_PARSE_FLOAT
+                float float_value;
+                int parse_result = simple_parse_float(value_view, &float_value);
+                if (parse_result > 0) {
+                    fmt::println(stderr, "Broken format in input file: cannot parse float value {} at offset {}", value_view, (chunk.chunk_start_ + chunk.initial_offset_ + i));
+                    throw std::runtime_error("Broken float value in input file.");
+                }
+#else
                 float float_value = std::stof(std::string(value_view));
-
+#endif
                 auto found = map.find(station_view);
                 if (found == map.end()) {
                     map.emplace(station_view, float_value);
@@ -142,22 +156,25 @@ struct UTF8StringComparator {
 
         // Vergleiche die Strings mit coll.compare
         return coll.compare(str1.data(), str1.data() + str1.length(),
-                            str2.data(), str2.data() + str2.length()) < 0;
+            str2.data(), str2.data() + str2.length()) < 0;
     }
 };
 
-
+static constexpr int ERROR_ARGS = 1;
+static constexpr int ERROR_FILE_FORMAT = 2;
+static constexpr int ERROR_OTHER = 3;
 
 int main(int argc, char *argv[]) {
+    int ret = 0;
     argparse::ArgumentParser args("1brc", "1.0");
     args.add_argument("-T", "--threads").metavar(("THREADS")).help("Use specified number of threads").scan<'i', size_t>();
-    args.add_argument("file").help("input CSV file with two columns: STATION;DEGEREES").required();
+    args.add_argument("file").help("input CSV file with two columns: STATION;DEGREES").required();
     try {
         args.parse_args(argc, argv);
     } catch(std::exception const & e) {
         fmt::println(stderr, "{}", e.what());
         std::cerr << args;
-        exit(1);
+        exit(ERROR_ARGS);
     }
     std::string file_name = args.get("file");
     mmapped_file input(file_name);
@@ -165,8 +182,9 @@ int main(int argc, char *argv[]) {
         fmt::println(stderr, "Using chunk size of {}.", input.chunk_size());
         fmt::println(stderr, "File has size {}.", input.file_size());
 
-        agg_map_type agg(1000);
+        agg_map_type aggregated_result(1000);
         std::vector<std::jthread> threads;
+        std::vector<std::future<void>> futures;
         std::mutex mtx;
 
         size_t max_chunks = (size_t)std::ceil(input.file_size() / (double)input.chunk_size());
@@ -175,30 +193,48 @@ int main(int argc, char *argv[]) {
         auto partitions = std::min(max_chunks, max_threads);
         fmt::println(stderr, "Using {} partitions (threads).", partitions);
         auto partition_size = input.file_size() / (double)partitions;
-        for(size_t i = 0; i < partitions; ++i) {
-            size_t start = i * partition_size;
-            size_t end = (i + 1) * partition_size;
-            threads.emplace_back([&input, &agg, &mtx, i, start, end] {
-                fmt::println(stderr, "Partition {:02} from {:9L} to {:9L}", i, start, end);
-                auto local_result = scan_input(input, start, end, i);
-                {
-                    std::lock_guard<std::mutex> lock(mtx);
-                    //fmt::println(stderr, "Partition {:02} merging.", i);
-                    for (auto const & [key, value] : local_result) {
-                        auto found = agg.find(key);
-                        if (found == agg.end()) {
-                            agg.emplace(key, value);
-                        } else {
-                            found->second.combine(value);
+
+        for(size_t partition_nr = 0; partition_nr < partitions; ++partition_nr) {
+            size_t start = partition_nr * partition_size;
+            size_t end = (partition_nr + 1) * partition_size;
+            std::promise<void> prm;
+            futures.push_back(prm.get_future());
+            threads.emplace_back([&input, &aggregated_result, &mtx, promise=std::move(prm), partition_nr, start, end] () mutable {
+                fmt::println(stderr, "Partition {:02} from {:9L} to {:9L}", partition_nr, start, end);
+                try {
+                    auto local_result = scan_input(input, start, end, partition_nr);
+                    {
+                        std::lock_guard<std::mutex> lock(mtx);
+                        for (auto const & [key, value] : local_result) {
+                            auto found = aggregated_result.find(key);
+                            if (found == aggregated_result.end()) {
+                                aggregated_result.emplace(key, value);
+                            } else {
+                                found->second.combine(value);
+                            }
                         }
                     }
+                    promise.set_value();
+                } catch (std::runtime_error& e) {
+                    fmt::println("Exception in partition {}: {}", partition_nr, e.what());
+                    promise.set_exception(std::current_exception());
                 }
             });
         }
-        for(auto & e : threads)
-            e.join();
+        for(auto & e : futures) {
+            try {
+                e.get();
+            } catch (std::runtime_error& e) {
+                ret = ERROR_FILE_FORMAT;
+            } catch (std::exception& e) {
+                ret = ERROR_OTHER;
+            }
+        }
+        if (ret != 0)
+            exit(ret);
+
         // convert to a sorted map
-        std::map<std::string, statistics, UTF8StringComparator> sorted_map(agg.begin(), agg.end());
+        std::map<std::string, statistics, UTF8StringComparator> sorted_map(aggregated_result.begin(), aggregated_result.end());
         // print all collected statistics
         fmt::println(" **** Statistics ***");
         size_t cnt = 0;
@@ -207,7 +243,7 @@ int main(int argc, char *argv[]) {
                 e.second.min_, e.second.avg(), e.second.max_, e.second.cnt_);
             cnt += e.second.cnt_;
         }
-        fmt::println("\nCounted {} total measures.", cnt);
+        fmt::println(stderr, "\nCounted {} total measures.", cnt);
     }
-    return 0;
+    return ret;
 }

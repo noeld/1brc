@@ -6,6 +6,8 @@ set(CMAKE_CXX_STANDARD 20)
 find_package(fmt CONFIG REQUIRED)
 find_package(argparse CONFIG REQUIRED)
 
+option(USE_SIMPLE_PARSE_FLOAT "Use the simple float parser which avoids copying." ON)
+
 add_executable(1brc main.cpp
         mmapped_file.h
         statistics.h
@@ -13,6 +15,10 @@ add_executable(1brc main.cpp
         simple_parse_float.h)
 target_link_libraries(1brc PRIVATE fmt::fmt argparse::argparse)
 target_compile_options(1brc PRIVATE "-mavx2" -O3)
+if (USE_SIMPLE_PARSE_FLOAT)
+        target_compile_definitions(1brc PRIVATE USE_SIMPLE_PARSE_FLOAT)
+        message(STATUS "Using simple_parse_float")
+endif()
 
 add_executable(simple_float_convert_test
         simple_parse_float.cpp

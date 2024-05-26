@@ -115,8 +115,8 @@ public:
         size_t chunk_start = find_closest_multiple(off, page_size());
         size_t initial_offset = off - chunk_start;
         size_t len = std::min(chunk_size_, file_size_ - chunk_start);
-        void *ptr = mmap(nullptr, len, PROT_READ, MAP_PRIVATE, fd_, chunk_start);
-        constexpr size_t so = sizeof(off_t);
+        void *ptr = mmap(nullptr, len, PROT_READ, MAP_SHARED, fd_, chunk_start);
+        static constexpr size_t so = sizeof(off_t);
         if (MAP_FAILED == ptr) {
             perror(file_name_.c_str());
             throw std::runtime_error("MAP FAILED");
