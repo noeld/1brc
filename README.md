@@ -59,14 +59,15 @@ compile option off like `cmake ... -DUSE_SIMPLE_PARSE_FLOAT=OFF ...`.
 
 ## Run
 
-1. Create test data using `build/create-sample 1000000000`
-2. Run the challenge using `time build/1brc measurements.txt > /dev/null`
+1. Create test data using `build/create-sample 1000000000`.
+1. Run the challenge using `time build/1brc measurements.txt > /dev/null`.
+
+
+## Usage
 
     Usage: 1brc [--help] [--version] [--threads THREADS] file
-
     Positional arguments:
       file                   input CSV file with two columns: STATION;DEGREES [required]
-
     Optional arguments:
       -h, --help             shows help message and exits
       -v, --version          prints version information and exits
