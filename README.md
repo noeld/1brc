@@ -65,24 +65,27 @@ compile option off like `cmake ... -DUSE_SIMPLE_PARSE_FLOAT=OFF ...`.
 
 ## Usage
 
-    Usage: 1brc [--help] [--version] [--threads THREADS] file
+    Usage: 1brc [--help] [--version] [--threads THREADS] [--verbose] file
+
     Positional arguments:
       file                   input CSV file with two columns: STATION;DEGREES [required]
+
     Optional arguments:
       -h, --help             shows help message and exits
       -v, --version          prints version information and exits
       -T, --threads THREADS  Use specified number of threads
+      -V, --verbose          print verbose output
 
 ## Measured Results
 
-Using hot cache 5 consecutive executions yielded a mean of 11,265s to parse a
+Using *hot* cache 5 consecutive executions yielded a mean of 7,64s to parse a
 measurements.txt file with 1 billion rows ~ 12,8GB.
 
-    13,988
-    11,025
-    10,598
-     9,402
-    11,315
+    ./1brc measurements.1E9.txt > /dev/null  75,04s user 1,83s system  986% cpu 7,788 total
+    ./1brc measurements.1E9.txt > /dev/null  82,36s user 1,59s system 1049% cpu 7,999 total
+    ./1brc measurements.1E9.txt > /dev/null  74,16s user 2,25s system  975% cpu 7,831 total
+    ./1brc measurements.1E9.txt > /dev/null  79,48s user 1,54s system 1055% cpu 7,673 total
+    ./1brc measurements.1E9.txt > /dev/null  74,62s user 1,74s system 1105% cpu 6,909 total
 
 on a AMD Ryzen 5 3600 6-Core Processor.
 
