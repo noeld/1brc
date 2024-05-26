@@ -70,11 +70,11 @@ using agg_map_type = std::unordered_map<std::string, statistics, string_hash, st
  * @param end pffset in file where to stop; actually continue until the first new-line behind end
  * @return the map off aggregated values
  */
-auto scan_input(mmapped_file const & input, size_t start, size_t end, size_t partition) -> agg_map_type {
+auto scan_input(mmapped_file const & input, size_t start, size_t end, size_t partition, bool verbose) -> agg_map_type {
     using std::string_view_literals::operator ""sv;
     agg_map_type map(1000);
     static constexpr size_t MAX_FIELDS_CNT = 10;
-    std::vector<size_t> field_pos(10);
+    std::vector<size_t> field_pos(MAX_FIELDS_CNT);
     size_t file_pos = start;
     size_t skipped = 0;
     while (file_pos < end) {
@@ -89,7 +89,8 @@ auto scan_input(mmapped_file const & input, size_t start, size_t end, size_t par
             if (nl != std::string_view::npos) {
                 skipped = nl + 1;
                 i += skipped;
-                fmt::println(stderr, "Partition {:02} skipped {} bytes.", partition, i);
+                if (verbose)
+                    fmt::println(stderr, "Partition {:02} skipped {} bytes.", partition, i);
             } else {
                 std::cerr << "Cannot find start of chunk" << (chunk.chunk_start_ + chunk.initial_offset_) << '\n';
                 throw std::runtime_error("Cannot find start of chunk");
@@ -140,7 +141,8 @@ auto scan_input(mmapped_file const & input, size_t start, size_t end, size_t par
         }
 
     }
-    fmt::println(stderr, "Partition {:02d} processed from {:12L} to actually {:12L} (end: {:12L})",
+    if (verbose)
+        fmt::println(stderr, "Partition {:02d} processed from {:12L} to actually {:12L} (end: {:12L})",
         partition, start + skipped,file_pos, end);
     return map;
 }
@@ -169,6 +171,7 @@ int main(int argc, char *argv[]) {
     argparse::ArgumentParser args("1brc", "1.0");
     args.add_argument("-T", "--threads").metavar(("THREADS")).help("Use specified number of threads").scan<'i', size_t>();
     args.add_argument("file").help("input CSV file with two columns: STATION;DEGREES").required();
+    args.add_argument("-V", "--verbose").help("print verbose output").default_value(false).implicit_value(true);
     try {
         args.parse_args(argc, argv);
     } catch(std::exception const & e) {
@@ -177,10 +180,9 @@ int main(int argc, char *argv[]) {
         exit(ERROR_ARGS);
     }
     std::string file_name = args.get("file");
+    bool const verbose = args.get<bool>("-V");
     mmapped_file input(file_name);
     if (input) {
-        fmt::println(stderr, "Using chunk size of {}.", input.chunk_size());
-        fmt::println(stderr, "File has size {}.", input.file_size());
 
         agg_map_type aggregated_result(1000);
         std::vector<std::jthread> threads;
@@ -188,21 +190,26 @@ int main(int argc, char *argv[]) {
         std::mutex mtx;
 
         size_t max_chunks = (size_t)std::ceil(input.file_size() / (double)input.chunk_size());
-        fmt::println(stderr, "Maximum of {} chunks.", max_chunks);
         size_t max_threads = args.present<size_t>("-T").value_or(std::thread::hardware_concurrency());
         auto partitions = std::min(max_chunks, max_threads);
-        fmt::println(stderr, "Using {} partitions (threads).", partitions);
         auto partition_size = input.file_size() / (double)partitions;
+        if (verbose){
+            fmt::println(stderr, "Using chunk size of {}.", input.chunk_size());
+            fmt::println(stderr, "File has size {}.", input.file_size());
+            fmt::println(stderr, "Maximum of {} chunks.", max_chunks);
+            fmt::println(stderr, "Using {} partitions (threads).", partitions);
+        }
 
         for(size_t partition_nr = 0; partition_nr < partitions; ++partition_nr) {
             size_t start = partition_nr * partition_size;
             size_t end = (partition_nr + 1) * partition_size;
             std::promise<void> prm;
             futures.push_back(prm.get_future());
-            threads.emplace_back([&input, &aggregated_result, &mtx, promise=std::move(prm), partition_nr, start, end] () mutable {
-                fmt::println(stderr, "Partition {:02} from {:9L} to {:9L}", partition_nr, start, end);
+            threads.emplace_back([&input, &aggregated_result, &mtx, promise=std::move(prm), partition_nr, start, end, verbose] () mutable {
+                if (verbose)
+                    fmt::println(stderr, "Partition {:02} from {:9L} to {:9L}", partition_nr, start, end);
                 try {
-                    auto local_result = scan_input(input, start, end, partition_nr);
+                    auto local_result = scan_input(input, start, end, partition_nr, verbose);
                     {
                         std::lock_guard<std::mutex> lock(mtx);
                         for (auto const & [key, value] : local_result) {

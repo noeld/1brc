@@ -14,7 +14,7 @@ add_executable(1brc main.cpp
         simple_parse_float.cpp
         simple_parse_float.h)
 target_link_libraries(1brc PRIVATE fmt::fmt argparse::argparse)
-target_compile_options(1brc PRIVATE "-mavx2" -O3)
+#target_compile_options(1brc PRIVATE "-mavx2" -O3)
 if (USE_SIMPLE_PARSE_FLOAT)
         target_compile_definitions(1brc PRIVATE USE_SIMPLE_PARSE_FLOAT)
         message(STATUS "Using simple_parse_float")
