@@ -8,6 +8,8 @@ find_package(argparse CONFIG REQUIRED)
 
 option(USE_SIMPLE_PARSE_FLOAT "Use the simple float parser which avoids copying." ON)
 
+add_compile_options(-Werror -Wall -Wconversion)
+
 add_executable(1brc main.cpp
         mmapped_file.h
         statistics.h
@@ -20,13 +22,23 @@ if (USE_SIMPLE_PARSE_FLOAT)
         message(STATUS "Using simple_parse_float")
 endif()
 
-add_executable(simple_float_convert_test
-        simple_parse_float.cpp
-        simple_parse_float.h
-        simple_float_convert_test.cpp
-)
-target_link_libraries(simple_float_convert_test PRIVATE fmt::fmt)
-
 add_executable(create-sample
         create-sample.c)
 target_link_libraries(create-sample PRIVATE m)
+
+include(FetchContent)
+FetchContent_Declare(
+        doctest
+        GIT_REPOSITORY https://github.com/onqtam/doctest.git
+        GIT_TAG v2.4.11
+)
+FetchContent_MakeAvailable(doctest)
+
+enable_testing()
+
+add_executable(simple_float_convert_doctest
+        simple_parse_float.cpp
+        simple_parse_float.h
+        simple_float_convert_doctest.cpp)
+target_link_libraries(simple_float_convert_doctest PRIVATE doctest::doctest fmt::fmt)
+add_test(NAME sfc_test COMMAND simple_float_convert_doctest)

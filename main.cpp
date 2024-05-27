@@ -4,7 +4,6 @@
 #include <exception>
 #include <future>
 #include <stdexcept>
-#define _FILE_OFFSET_BITS 64
 
 #include <algorithm>
 #include <cmath>
@@ -189,10 +188,10 @@ int main(int argc, char *argv[]) {
         std::vector<std::future<void>> futures;
         std::mutex mtx;
 
-        size_t max_chunks = (size_t)std::ceil(input.file_size() / (double)input.chunk_size());
+        size_t max_chunks = (size_t)std::ceil(static_cast<double>(input.file_size()) / (double)input.chunk_size());
         size_t max_threads = args.present<size_t>("-T").value_or(std::thread::hardware_concurrency());
         auto partitions = std::min(max_chunks, max_threads);
-        auto partition_size = input.file_size() / (double)partitions;
+        auto partition_size = (double)input.file_size() / (double)partitions;
         if (verbose){
             fmt::println(stderr, "Using chunk size of {}.", input.chunk_size());
             fmt::println(stderr, "File has size {}.", input.file_size());
@@ -201,8 +200,8 @@ int main(int argc, char *argv[]) {
         }
 
         for(size_t partition_nr = 0; partition_nr < partitions; ++partition_nr) {
-            size_t start = partition_nr * partition_size;
-            size_t end = (partition_nr + 1) * partition_size;
+            size_t start = (size_t)((double)partition_nr * partition_size);
+            size_t end = (size_t)(((double)partition_nr + 1) * partition_size);
             std::promise<void> prm;
             futures.push_back(prm.get_future());
             threads.emplace_back([&input, &aggregated_result, &mtx, promise=std::move(prm), partition_nr, start, end, verbose] () mutable {

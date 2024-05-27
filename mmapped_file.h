@@ -63,7 +63,7 @@ public:
     };
 
     static size_t page_size() {
-        static size_t ps = sysconf(_SC_PAGESIZE);
+        static size_t ps = static_cast<size_t>(sysconf(_SC_PAGESIZE));
         return ps;
     }
 
@@ -115,8 +115,7 @@ public:
         size_t chunk_start = find_closest_multiple(off, page_size());
         size_t initial_offset = off - chunk_start;
         size_t len = std::min(chunk_size_, file_size_ - chunk_start);
-        void *ptr = mmap(nullptr, len, PROT_READ, MAP_SHARED, fd_, chunk_start);
-        static constexpr size_t so = sizeof(off_t);
+        void *ptr = mmap(nullptr, len, PROT_READ, MAP_SHARED, fd_, static_cast<long>(chunk_start));
         if (MAP_FAILED == ptr) {
             perror(file_name_.c_str());
             throw std::runtime_error("MAP FAILED");
@@ -127,16 +126,16 @@ public:
 protected:
     void compute_chunks(size_t chunk_size_approx) noexcept {
         auto find_closest_multiple = [](auto n, auto v) {
-            int result = ((n + v - 1) / v) * v;
+            size_t result = ((n + v - 1) / v) * v;
             if (result < 2*v) {
                 result += v;
             }
             return result;
         };
         chunk_size_ = find_closest_multiple(chunk_size_approx, page_size());
-        auto div = std::lldiv(file_size_, chunk_size_);
-        chunks_total_ = div.quot;
-        chunks_last_remainder_ = div.rem;
+        auto div = std::lldiv(static_cast<long long>(file_size_), static_cast<long long>(chunk_size_));
+        chunks_total_ = static_cast<size_t>(div.quot);
+        chunks_last_remainder_ = static_cast<size_t>(div.rem);
         if (div.rem > 0)
             chunks_total_++;
     }
