@@ -115,12 +115,12 @@ auto scan_input(mmapped_file const & input, size_t start, size_t end, size_t par
                 auto station_view = sv.substr(field_pos[0], field_pos[1] - 1 - field_pos[0]);
                 auto value_view = sv.substr(field_pos[1], field_pos[2] - 1 - field_pos[1]);
 #ifdef USE_SIMPLE_PARSE_FLOAT
-                float float_value;
-                int parse_result = simple_parse_float(value_view, &float_value);
-                if (parse_result > 0) {
+                auto parse_result = simple_parse_float(value_view);
+                if (!parse_result) {
                     fmt::println(stderr, "Broken format in input file: cannot parse float value {} at offset {}", value_view, (chunk.chunk_start_ + chunk.initial_offset_ + i));
                     throw std::runtime_error("Broken float value in input file.");
                 }
+                float float_value = parse_result.value();
 #else
                 float float_value = std::stof(std::string(value_view));
 #endif
