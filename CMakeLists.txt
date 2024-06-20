@@ -7,8 +7,14 @@ find_package(fmt CONFIG REQUIRED)
 find_package(argparse CONFIG REQUIRED)
 
 option(USE_SIMPLE_PARSE_FLOAT "Use the simple float parser which avoids copying." ON)
+option(BUILD_FOR_PROFILER "Compile and link for code profiling (adds -pg to compiler and linker)" OFF)
 
 add_compile_options(-Werror -Wall -Wconversion)
+
+if (BUILD_FOR_PROFILER)
+        add_compile_options(-pg)
+        add_link_options(-pg)
+endif()
 
 add_executable(1brc main.cpp
         mmapped_file.h
@@ -42,3 +48,5 @@ add_executable(simple_float_convert_doctest
         simple_float_convert_doctest.cpp)
 target_link_libraries(simple_float_convert_doctest PRIVATE doctest::doctest fmt::fmt)
 add_test(NAME sfc_test COMMAND simple_float_convert_doctest)
+
+add_executable(analyze analyze.c)

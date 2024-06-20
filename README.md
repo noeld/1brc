@@ -79,7 +79,7 @@ compile option off like `cmake ... -DUSE_SIMPLE_PARSE_FLOAT=OFF ...`.
 ## Measured Results
 
 Using *hot* cache 5 consecutive executions yielded a mean of 7,64s to parse a
-measurements.txt file with 1 billion rows ~ 12,8GB.
+measurements.txt file with 1 billion rows ~ 12,8GB using `simple_parse_float2`.
 
     ./1brc measurements.1E9.txt > /dev/null  75,04s user 1,83s system  986% cpu 7,788 total
     ./1brc measurements.1E9.txt > /dev/null  82,36s user 1,59s system 1049% cpu 7,999 total
@@ -88,4 +88,11 @@ measurements.txt file with 1 billion rows ~ 12,8GB.
     ./1brc measurements.1E9.txt > /dev/null  74,62s user 1,74s system 1105% cpu 6,909 total
 
 on a AMD Ryzen 5 3600 6-Core Processor.
+
+Using `super_simple_parse_float` the time drops to 5,828s. But this float parser
+strictly assumes the format `-?\d{1,2}\.\d`.
+
+The original https://github.com/dannyvankooten/1brc analyze.c timed a blazing
+2,4s on my machine!
+
 
